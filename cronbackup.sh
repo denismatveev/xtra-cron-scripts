@@ -49,8 +49,8 @@ makefull()
 #	$PWD/xb-backup-incremental.sh -r "$BACKUPDIR" -u  "$DBUSER" -p "$DBPASS" --backup-threads="$THREADS" 
     TARGET="$BACKUPDIR"/"$NOW"/"$NOW"-0
     mkdir -p "$TARGET"
-    xtrabackup --backup --target-dir="$TARGET" --parallel="$THREADS" #make full backups
-#    cp -rv "$MY" "$TARGET"
+    xtrabackup --backup --target-dir="$TARGET" --datadir="$MY" --parallel="$THREADS" #make full backups
+    rsync -rv --exclude=ibdata* --exclude=xtrabackup_* "$MY" "$TARGET"
     chown mysql: "$TARGET"
 	return 0
 }
@@ -64,9 +64,10 @@ makeincremental()
     let i=$i+1
     TARGET="$BACKUPDIR"/"$CURRENTFULLBACKUP"/"$NOW"-"$i"
     mkdir -p "$TARGET"
-    xtrabackup --backup --target-dir="$TARGET" --incremental-basedir="$BACKUPDIR"/"$CURRENTFULLBACKUP"/"$PREVIOUSBACKUP" --parallel="$THREADS"
+    xtrabackup --backup --target-dir="$TARGET" --datadir="$MY" --incremental-basedir="$BACKUPDIR"/"$CURRENTFULLBACKUP"/"$PREVIOUSBACKUP" --parallel="$THREADS"
     #tar -cf 
-
+    rsync -rv --exclude=ibdata* --exclude=xtrabackup_* "$MY" "$TARGET"
+    
 	return 0
 }
 
