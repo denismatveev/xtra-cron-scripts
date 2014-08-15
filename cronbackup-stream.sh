@@ -55,6 +55,7 @@ makefull()
     #kill `pgrep "nc -l -p 9999" -f`
 
      cd "$TARGET" && ssh "$SERVER" xtrabackup --backup  --datadir="$MY" --stream=xbstream | xbstream -x
+     ssh "$SERVER" tar zcf - "$MY"/xtrabackup_logfile | tar zxf - --strip-components=3 
 ### backup the rest files ###
     #ssh matveev@flexo 'tar zcf - ~' > arch.tar.gz
     ssh "$SERVER" tar --create --preserve-permissions --totals --gzip  --ignore-failed-read --one-file-system --sparse\
@@ -87,7 +88,7 @@ makeincremental()
 #    kill `pgrep "nc -l -p 9999" -f`
 
    cd "$TARGET" && ssh "$SERVER" xtrabackup --backup --incremental-lsn="$LAST_LSN" --datadir="$MY" --stream=xbstream | xbstream -x
-
+   ssh "$SERVER" tar zcf - "$MY"/xtrabackup_logfile | tar zxf - --strip-components=3 
 #    rsync -rv --exclude=ibdata* --exclude=xtrabackup_* root@"$SERVER":"$MY" "$TARGET"
 ## backup the rest files    
    ssh "$SERVER" tar --create --preserve-permissions --totals --gzip  --ignore-failed-read --one-file-system --sparse\
