@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+#set -e
 #set -x
 
 ######################
@@ -11,7 +11,8 @@ NUMBERINCRBACKUPS=15 #+1
 LOCKFILE=/var/run/cronbackup.lock
 MY=/var/lib/mysql
 NOW=$(date +%Y%m%d-%H%M)
-SERVER=172.16.1.82 #master server
+TMP=/tmp
+SERVER=flexo.navixy.com #master server
 ####################################
 #### lockfile ####
 if [ -e "$LOCKFILE" ]
@@ -43,50 +44,72 @@ NUMBEROFCURRENTINCRBACKUPS=$(ls -1 "$BACKUPDIR"/"$CURRENTFULLBACKUP" 2>/dev/null
 #      etc...
 #
 #
+wait_suspend_file()
+{
+    while : 
+    do
+        ssh  "$SERVER"  ls -1 $TMP/xtrabackup_suspended_2  1>&2 2>/dev/null
+        if [[ $? = 0 ]] 
+            then break;
+        fi
+       sleep 2 # if doesn't exist
+   done
+   ssh -f "$SERVER" rm -f $TMP/xtrabackup_*
+}
 makefull()
 {
-# To extract the resulting tar file, you must use the -i option, such as tar -ixvf backup.tar.
     TARGET="$BACKUPDIR"/"$NOW"/"$NOW"-0
     mkdir -p "$TARGET"
+
 ### backup ibdata ###
-
-     cd "$TARGET" && ssh "$SERVER" xtrabackup --backup  --datadir="$MY" --stream=xbstream | xbstream -x
-     ssh "$SERVER" tar zcf - "$MY"/xtrabackup_logfile | tar zxf - --strip-components=3 
+    echo `date +%Y%m%d-%H%M:`;echo -e "Copying ibdata..\n"
+    cd "$TARGET" && ssh "$SERVER" xtrabackup_55 --backup  --datadir="$MY" --target-dir=/tmp --tmpdir=/tmp --stream=xbstream --suspend-at-end | xbstream -x & # background process
+    
 ### backup the rest files ###
-
+    ssh "$SERVER" rm -f "$MY"/backup.list
+    echo -e `date +%Y%m%d-%H%M:`;echo -e "Copying the rest mysql data..\n"
+    ssh "$SERVER" "mysql -e 'FLUSH TABLES WITH READ LOCK;'"
     ssh "$SERVER" tar --create --preserve-permissions --totals --gzip  --ignore-failed-read --one-file-system --sparse\
     --wildcards --verbose \
     --listed-incremental=$MY/backup.list \
     --no-check-device  \
     --exclude=ibdata* \
     --exclude=xtrabackup_* \
+    --exclude=ib_logfile* \
     --exclude-caches "$MY" > "$TARGET"/mysql-0.tar.gz
-
+    ssh "$SERVER" "mysql -e 'UNLOCK TABLES;'"
+    wait_suspend_file;
+    echo `date +%Y%m%d-%H%M:`;echo -e "All done.OK\n"
+    
     return 0
 }
 
 makeincremental()
 {
-## backup ibdata    
+#### make ibdata delta
     i=$(ls -1t "$BACKUPDIR"/"$CURRENTFULLBACKUP"/ 2>/dev/null | head -n1 | cut -d"-" -f3) # number of existing incremental backups
     PREVIOUSBACKUP=$(ls -1t "$BACKUPDIR"/"$CURRENTFULLBACKUP" | head -n1)
-    let "i+=1"
+    #let "i+=1"
+    (( i++ ))
     TARGET="$BACKUPDIR"/"$CURRENTFULLBACKUP"/"$NOW"-"$i"
     mkdir -p "$TARGET"
 
-    LAST_LSN=$(grep last_lsn "$BACKUPDIR"/"$CURRENTFULLBACKUP"/"$PREVIOUSBACKUP"/xtrabackup_checkpoints | cut -f3 -d" ")
+    LAST_LSN=$(grep to_lsn "$BACKUPDIR"/"$CURRENTFULLBACKUP"/"$PREVIOUSBACKUP"/xtrabackup_checkpoints | cut -f3 -d" ") # 
 
-   cd "$TARGET" && ssh "$SERVER" xtrabackup --backup --incremental-lsn="$LAST_LSN" --datadir="$MY" --stream=xbstream | xbstream -x
-   ssh "$SERVER" tar zcf - "$MY"/xtrabackup_logfile | tar zxf - --strip-components=3 
-
-## backup the rest files    
-   ssh "$SERVER" tar --create --preserve-permissions --totals --gzip  --ignore-failed-read --one-file-system --sparse\
+   cd "$TARGET" && ssh "$SERVER" xtrabackup_55 --backup --incremental-lsn="$LAST_LSN" --target-dir=/tmp --tmpdir=/tmp --datadir="$MY" --stream=xbstream --suspend-at-end | xbstream -x &
+#### backup the rest files    
+    ssh "$SERVER" "mysql -e 'FLUSH TABLES WITH READ LOCK;'"
+    ssh "$SERVER" tar --create --preserve-permissions --totals --gzip  --ignore-failed-read --one-file-system --sparse\
     --wildcards --verbose \
     --listed-incremental="$MY"/backup.list \
     --no-check-device  \
     --exclude=ibdata* \
     --exclude=xtrabackup_* \
+    --exclude=ib_logfile* \
     --exclude-caches "$MY" > "$TARGET"/mysql-incr-"$i".tar.gz
+    ssh "$SERVER" "mysql -e 'UNLOCK TABLES;'"
+    wait_suspend_file;
+    echo `date +%Y%m%d-%H%M:`;echo -e "All done.OK\n"
 
     return 0
 }
@@ -95,10 +118,9 @@ rmexpiredbackups()
 {
 	
 	if [[ "$CURRENTNUMBEROFFULLBACKUPS" -ge "$NUMBEROFFULLBACKUPS" ]] && [[ "$NUMBEROFCURRENTINCRBACKUPS" -ge "$NUMBERINCRBACKUPS" ]] && [[ "$NUMBEROFINCREMENTALBACKUPSINOLDESTFULL" -ge "$NUMBERINCRBACKUPS" ]]
-        then
-	    echo -e "deleting old backups: "$BACKUPDIR"/"$OLDESTBACKUP"\n" 
+        	then
+		echo -e "deleting old backups: "$BACKUPDIR"/"$OLDESTBACKUP"\n" 
         rm -rf "$BACKUPDIR"/"$OLDESTBACKUP"
-        ssh "$SERVER" 'rm -f "$MY"/backup.list'
 		echo -e "old backups deleted at `date +%F-%T`\n"  
 	else
 		echo -e "nothing to delete of backups\n"
@@ -106,7 +128,7 @@ rmexpiredbackups()
 	return 0;
 
 }
-####### main() ##########
+#######################
 
 
 
@@ -121,4 +143,3 @@ rmexpiredbackups()
  
 	rmexpiredbackups;
 
-## the end
