@@ -1,0 +1,4 @@
+# /etc/cron.d/backup.sh
+# start of backup our DBs at 01 YEKT
+#
+0 20 * * * root cd /root/bin && ./cronbackup.sh 1>&2 2>>/var/log/dbbackup.log
